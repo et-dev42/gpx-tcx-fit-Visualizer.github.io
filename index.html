@@ -1,0 +1,1749 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <title>GPX Visualizer</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>
+        *, *::before, *::after { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+
+        :root {
+            --accent: #00d4ff;
+            --bg: #0a0a0a;
+            --panel: rgba(12,12,12,0.96);
+            --border: #2a2a2a;
+            --dim: #888;
+            --safe-bottom: env(safe-area-inset-bottom, 0px);
+            --safe-top: env(safe-area-inset-top, 0px);
+            --map-brightness: 0.75;
+            --map-contrast: 1.15;
+            --map-saturate: 1.4;
+        }
+
+        html, body {
+            margin: 0; padding: 0;
+            background: #000; color: #fff;
+            font-family: -apple-system, 'Segoe UI', sans-serif;
+            overflow: hidden; height: 100%; width: 100%;
+        }
+
+        #map {
+            position: fixed; inset: 0;
+            height: 100vh; width: 100vw; z-index: 1;
+        }
+        .leaflet-tile-container { filter: brightness(var(--map-brightness)) contrast(var(--map-contrast)) saturate(var(--map-saturate)); }
+        .leaflet-control-zoom { display: none; }
+
+        .speed-label-marker {
+            color: white; font-weight: 700; font-size: 10px;
+            text-shadow: 1px 1px 3px #000, -1px -1px 3px #000;
+            white-space: nowrap; pointer-events: none;
+        }
+        @keyframes bounce-down {
+            0%,100% { r: 6; }
+            50%      { r: 11; }
+        }
+        .hover-arrow-icon circle {
+            animation: bounce-down 0.8s ease-in-out infinite;
+        }
+
+        /* Radar Tooltip */
+        .radar-tooltip {
+            background: rgba(10,10,10,0.92) !important;
+            border: 1px solid #ff4400 !important;
+            color: #ffaa00 !important;
+            font-size: 11px !important;
+            font-weight: 700 !important;
+            border-radius: 6px !important;
+            padding: 4px 8px !important;
+            box-shadow: 0 2px 10px rgba(255,68,0,0.3) !important;
+        }
+        .radar-tooltip::before { display: none !important; }
+
+        /* Radar Stats Badge in Legend */
+        .radar-stats {
+            display: flex; gap: 5px; margin-top: 5px; flex-wrap: wrap;
+        }
+        .radar-badge {
+            padding: 2px 7px; border-radius: 4px;
+            font-size: 9px; font-weight: 800; font-family: monospace;
+        }
+        .radar-badge.clear  { background:#0d2e0d; color:#00e676; border:1px solid #1a4a1a; }
+        .radar-badge.warn   { background:#2e1e00; color:#ffaa00; border:1px solid #4a3200; }
+        .radar-badge.danger { background:#2e0808; color:#ff1744; border:1px solid #4a1010; }
+
+        /* ═══════════════════════════════════════════
+           DESKTOP LAYOUT
+        ═══════════════════════════════════════════ */
+        #desktop-panel {
+            position: absolute; top: 15px; left: 15px; z-index: 3000;
+            background: var(--panel); border-radius: 10px;
+            width: 285px; box-shadow: 0 5px 30px rgba(0,0,0,0.85);
+            border: 1px solid #333;
+            max-height: 92vh; display: flex; flex-direction: column;
+            transition: width 0.3s ease;
+        }
+        #desktop-panel.minimized {
+            width: 42px;
+            overflow: hidden;
+        }
+        #desktop-panel.minimized .d-scroll,
+        #desktop-panel.minimized .d-actions-top { display: none; }
+        #desktop-panel.minimized #drag-handle {
+            border-radius: 10px; border-bottom: none; writing-mode: vertical-rl;
+            padding: 12px 8px; letter-spacing: 3px;
+        }
+
+        #minimize-btn {
+            position: absolute; top: 6px; right: 6px;
+            background: none; border: none; color: #555; font-size: 14px;
+            cursor: pointer; line-height: 1; padding: 2px 4px; z-index: 1;
+            border-radius: 4px; transition: color 0.2s;
+        }
+        #minimize-btn:hover { color: #aaa; }
+
+        #drag-handle {
+            padding: 8px; background: #161616; border-radius: 10px 10px 0 0;
+            cursor: move; text-align: center; font-size: 9px; color: #aaa;
+            text-transform: uppercase; letter-spacing: 2px;
+            border-bottom: 1px solid #222; user-select: none; flex-shrink: 0;
+        }
+
+        .d-scroll { padding: 10px; overflow-y: auto; flex-grow: 1; }
+
+        #d-time {
+            font-family: 'SF Mono', monospace; font-size: 21px; font-weight: 700;
+            color: var(--accent); text-align: center; margin-bottom: 8px;
+            letter-spacing: 1px;
+        }
+
+        .d-section { margin-bottom: 10px; border-bottom: 1px solid #1e1e1e; padding-bottom: 8px; }
+
+        .lbl {
+            font-size: 10px; color: #aaa; text-transform: uppercase;
+            font-weight: 800; letter-spacing: 1px; display: block; margin-bottom: 5px;
+        }
+
+        .file-wrap { position: relative; overflow: hidden; display: inline-block; width: 100%; }
+        .file-wrap input[type="file"] { position: absolute; inset: 0; opacity: 0; cursor: pointer; width: 100%; }
+        .btn-upload {
+            border: 1px solid #333; color: #999; background: #1e1e1e;
+            padding: 7px 10px; border-radius: 5px; font-size: 11px; font-weight: 800;
+            width: 100%; cursor: pointer; text-transform: uppercase; letter-spacing: 0.5px;
+        }
+
+        .mode-row { display: flex; gap: 4px; }
+        .mode-btn {
+            flex: 1; background: #111; border: 1px solid #1e1e1e; color: var(--dim);
+            font-size: 9px; padding: 5px 2px; cursor: pointer; border-radius: 4px;
+            text-transform: uppercase; font-weight: 800; transition: all 0.1s;
+        }
+        .mode-btn.active { background: var(--accent); color: #000; border-color: var(--accent); }
+
+        input[type="range"] { width: 100%; cursor: pointer; accent-color: var(--accent); height: 3px; margin: 5px 0; }
+
+        .d-legend-item {
+            background: #0a0a0a; margin-bottom: 8px; padding: 8px;
+            border-radius: 7px; border: 1px solid #1a1a1a; border-left: 3px solid transparent;
+        }
+        .d-track-header { display: flex; justify-content: space-between; align-items: flex-start; }
+        .track-name {
+            font-size: 11px; font-weight: 800; text-transform: uppercase;
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px;
+        }
+        .del-btn {
+            color: #777; font-size: 13px; cursor: pointer; border: none;
+            background: none; line-height: 1; padding: 0 2px;
+        }
+        .del-btn:hover { color: #ff4444; }
+
+        .profile-box {
+            height: 44px; margin: 5px 0; cursor: crosshair;
+            background: #060606; border-radius: 4px; overflow: hidden;
+            border: 1px solid #111; position: relative;
+        }
+
+        .d-track-footer { display: flex; justify-content: space-between; align-items: center; margin-top: 5px; }
+        .follow-btn {
+            background: #111; color: var(--dim); border: 1px solid #222;
+            padding: 4px 10px; border-radius: 20px; font-size: 9px; font-weight: 800; cursor: pointer;
+        }
+        .follow-btn.active { background: #ff9f00; color: #000; border-color: #ff9f00; }
+        .dist-badge {
+            background: #181818; color: var(--accent);
+            padding: 2px 6px; border-radius: 4px; font-size: 11px;
+            font-weight: 800; font-family: monospace;
+        }
+
+        .d-actions { display: flex; gap: 6px; margin-top: 5px; }
+        .d-actions button {
+            flex: 1; padding: 10px; font-weight: 800; border-radius: 7px;
+            border: none; cursor: pointer; font-size: 12px;
+        }
+        #d-playBtn { background: var(--accent); color: #000; }
+        #d-playBtn:disabled { background: #222; color: #444; }
+        #d-resetBtn { background: #181818; color: #666; border: 1px solid #252525 !important; }
+
+        /* ═══════════════════════════════════════════
+           MOBILE LAYOUT
+        ═══════════════════════════════════════════ */
+
+        /* Top bar */
+        #m-topbar {
+            position: fixed; top: 0; left: 0; right: 0;
+            padding-top: var(--safe-top);
+            z-index: 500;
+            display: flex; align-items: center; justify-content: space-between;
+            padding-left: 12px; padding-right: 12px; padding-bottom: 10px;
+            background: linear-gradient(to bottom, rgba(0,0,0,0.72) 0%, transparent 100%);
+            pointer-events: none;
+        }
+        #m-topbar > * { pointer-events: all; }
+
+        #m-time {
+            font-family: 'SF Mono', monospace; font-size: 22px; font-weight: 700;
+            color: var(--accent); letter-spacing: 1px;
+            text-shadow: 0 0 14px rgba(0,212,255,0.35);
+        }
+        .top-btn {
+            background: rgba(14,14,14,0.88); border: 1px solid #333; color: #aaa;
+            border-radius: 50px; padding: 7px 14px;
+            font-size: 12px; font-weight: 700; cursor: pointer;
+            backdrop-filter: blur(8px); -webkit-backdrop-filter: blur(8px);
+        }
+        .top-btn.active { background: var(--accent); color: #000; border-color: var(--accent); }
+
+        /* Mode pills */
+        #m-modebar {
+            position: fixed; z-index: 600;
+            left: 50%; transform: translateX(-50%);
+            display: flex; gap: 5px;
+            background: rgba(10,10,10,0.9); border: 1px solid #282828;
+            border-radius: 50px; padding: 5px 8px;
+            backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+            white-space: nowrap;
+        }
+        .mode-pill {
+            padding: 6px 13px; border-radius: 50px;
+            background: transparent; border: none;
+            color: #aaa; font-size: 12px; font-weight: 800;
+            cursor: pointer; text-transform: uppercase; letter-spacing: 0.5px;
+            transition: all 0.15s;
+        }
+        .mode-pill.active { background: var(--accent); color: #000; }
+
+        /* FAB */
+        #m-fab {
+            position: fixed; right: 16px; z-index: 600;
+            width: 56px; height: 56px; border-radius: 50%;
+            background: var(--accent); color: #000;
+            font-size: 26px; border: none; cursor: pointer;
+            display: flex; align-items: center; justify-content: center;
+            box-shadow: 0 4px 20px rgba(0,212,255,0.4);
+            transition: transform 0.12s;
+        }
+        #m-fab:active { transform: scale(0.91); }
+
+        /* Bottom Sheet */
+        #m-sheet {
+            position: fixed; left: 0; right: 0; bottom: 0; z-index: 700;
+            background: var(--panel);
+            border-radius: 20px 20px 0 0;
+            border-top: 1px solid #2c2c2c;
+            backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px);
+            transition: transform 0.34s cubic-bezier(0.32,0.72,0,1);
+            max-height: 82vh; display: flex; flex-direction: column;
+        }
+        #m-sheet.collapsed { transform: translateY(calc(100% - 158px - var(--safe-bottom))); }
+
+        #m-handle-area {
+            padding: 10px 0 0; flex-shrink: 0;
+            cursor: grab; user-select: none; touch-action: none;
+        }
+        #m-handle {
+            width: 36px; height: 4px; border-radius: 2px;
+            background: #333; margin: 0 auto 10px;
+        }
+
+        /* Playbar */
+        #m-playbar { flex-shrink: 0; padding: 0 16px 6px; }
+        #m-timeSlider { width: 100%; accent-color: var(--accent); height: 3px; margin-bottom: 8px; cursor: pointer; }
+        .m-playrow {
+            display: flex; gap: 8px;
+            padding-bottom: calc(6px + var(--safe-bottom));
+        }
+        #m-playBtn {
+            flex: 1; padding: 13px; background: var(--accent); color: #000;
+            border: none; border-radius: 11px; font-size: 14px; font-weight: 800; cursor: pointer;
+        }
+        #m-playBtn:disabled { background: #222; color: #444; }
+        #m-resetBtn {
+            padding: 13px 18px; background: #1a1a1a; color: #666;
+            border: 1px solid #252525; border-radius: 11px;
+            font-size: 14px; font-weight: 700; cursor: pointer;
+        }
+
+        /* Sheet scroll */
+        #m-scroll {
+            overflow-y: auto; flex: 1; padding: 4px 16px 10px;
+            -webkit-overflow-scrolling: touch;
+        }
+        .m-lbl {
+            font-size: 10px; color: #aaa; text-transform: uppercase;
+            font-weight: 800; letter-spacing: 1px; margin: 10px 0 6px; display: block;
+        }
+        .m-slider-row { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
+        .m-slider-row span { font-size: 11px; color: #aaa; white-space: nowrap; }
+        .m-slider-row input[type="range"] { flex: 1; }
+        .m-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 10px; }
+        .m-card {
+            background: #111; border: 1px solid #1e1e1e; border-radius: 10px; padding: 8px 10px;
+        }
+        .m-card .m-lbl { margin: 0 0 4px; }
+
+        .m-legend-item {
+            background: #0d0d0d; border: 1px solid #1a1a1a; border-left: 3px solid transparent;
+            border-radius: 10px; padding: 10px; margin-bottom: 8px;
+        }
+        .m-track-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; }
+        .m-track-name { font-size: 12px; font-weight: 800; text-transform: uppercase; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 210px; }
+        .m-del { background: none; border: none; color: #777; font-size: 18px; cursor: pointer; padding: 0 4px; }
+        .m-del:active { color: #ff4444; }
+        .m-profile { height: 48px; background: #050505; border-radius: 6px; overflow: hidden; border: 1px solid #111; margin-bottom: 8px; position: relative; }
+        .m-track-footer { display: flex; justify-content: space-between; align-items: center; }
+
+        #m-empty {
+            text-align: center; padding: 18px 0 8px;
+            color: #aaa; font-size: 12px; line-height: 1.7;
+        }
+        #m-empty .ico { font-size: 30px; margin-bottom: 6px; }
+
+        /* ── Responsive visibility ── */
+        @media (min-width: 768px) and (pointer: fine) {
+            #m-topbar, #m-modebar, #m-fab, #m-sheet { display: none !important; }
+        }
+        @media (max-width: 767px), (pointer: coarse) {
+            #desktop-panel { display: none !important; }
+        }
+    </style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<!-- ═══════════ DESKTOP PANEL ═══════════ -->
+<div id="desktop-panel">
+    <div id="drag-handle" style="position:relative">GPX | TCX | FIT Visualizer
+        <button id="minimize-btn" onclick="toggleMinimize()" title="Minimieren">◀</button>
+    </div>
+    <!-- Lade-Button + Play/Reset — fix, scrollen nicht mit -->
+    <div class="d-actions-top" style="padding:8px 10px 4px;flex-shrink:0;display:flex;flex-direction:column;gap:6px;border-bottom:1px solid #1e1e1e">
+        <div class="file-wrap">
+            <button class="btn-upload">GPX / TCX / FIT laden</button>
+            <input type="file" id="d-fileInput" accept=".gpx,.tcx,.fit" multiple>
+        </div>
+        <div class="d-actions" style="margin:0">
+            <button id="d-playBtn" disabled>▶ Play</button>
+            <button id="d-resetBtn" onclick="resetAll()">↺ Reset</button>
+        </div>
+    </div>
+    <div class="d-scroll">
+
+        <div id="d-time">00:00:00</div>
+
+        <div class="d-section">
+            <span class="lbl">Heatmap Modus</span>
+            <div class="mode-row">
+                <button class="mode-btn active" id="d-btn-speed" onclick="setMode('speed')">KM/H</button>
+                <button class="mode-btn" id="d-btn-hr" onclick="setMode('hr')">Puls</button>
+                <button class="mode-btn" id="d-btn-cad" onclick="setMode('cad')">Kadenz</button>
+                <button class="mode-btn" id="d-btn-ele" onclick="setMode('ele')">Höhe</button>
+                <button class="mode-btn" id="d-btn-radar" onclick="setMode('radar')">Radar</button>
+            </div>
+        </div>
+
+        <div class="d-section">
+            <span class="lbl">Zeitstrahl</span>
+            <input type="range" id="d-timeSlider" min="0" max="0" value="0">
+            <span class="lbl" style="margin-top:6px">Wiedergabe-Geschwindigkeit</span>
+            <input type="range" id="d-speedRange" min="0.05" max="2" step="0.05" value="1">
+        </div>
+
+        <div class="d-section">
+            <span class="lbl">Karte</span>
+            <div class="mode-row" style="margin-bottom:8px">
+                <button class="mode-btn active" id="d-map-dark"    onclick="setMapLayer('dark')">Dark</button>
+                <button class="mode-btn"        id="d-map-street"  onclick="setMapLayer('street')">Street</button>
+                <button class="mode-btn"        id="d-map-osm"     onclick="setMapLayer('osm')">OSM</button>
+                <button class="mode-btn"        id="d-map-sat"     onclick="setMapLayer('sat')">Satellit</button>
+                <button class="mode-btn"        id="d-map-topo"    onclick="setMapLayer('topo')">Topo</button>
+            </div>
+            <span class="lbl" style="color:#aaa; margin-bottom:2px">Helligkeit</span>
+            <input type="range" id="d-brightnessRange" min="5" max="200" value="75">
+            <span class="lbl" style="color:#aaa; margin-bottom:2px; margin-top:4px">Kontrast</span>
+            <input type="range" id="d-contrastRange" min="50" max="200" value="115">
+            <span class="lbl" style="color:#aaa; margin-bottom:2px; margin-top:4px">Sättigung</span>
+            <input type="range" id="d-saturateRange" min="50" max="300" value="140">
+            <span class="lbl" style="color:#aaa; margin-bottom:2px; margin-top:4px">Follow-Zoom</span>
+            <input type="range" id="d-zoomRange" min="5" max="20" value="16">
+        </div>
+
+        <div class="d-section">
+            <span class="lbl">Tracks & Distanz</span>
+            <div id="d-legend"></div>
+        </div>
+
+    </div>
+</div>
+
+<!-- ═══════════ WETTER WIDGET (rechts oben) ═══════════ -->
+<div id="weather-widget" style="display:none;
+    position:fixed; top:15px; right:15px; left:auto; transform:none;
+    z-index:3000;
+    background:rgba(12,12,12,0.94); border:1px solid #2a2a2a;
+    border-radius:14px;
+    backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
+    box-shadow:0 6px 28px rgba(0,0,0,0.8);
+    flex-direction:column; align-items:stretch;
+    cursor:default; user-select:none;">
+    <!-- Drag Handle -->
+    <div id="wx-drag" style="
+        padding:6px 14px 4px; text-align:center; cursor:move;
+        font-size:11px; color:#bbb; text-transform:uppercase; letter-spacing:1px;
+        border-bottom:1px solid #1a1a1a; font-weight:700;">
+        <span id="wx-filename">–</span>
+    </div>
+    <!-- Wetterdaten horizontal -->
+    <div style="display:flex; align-items:center; gap:0; padding:10px 4px 10px">
+        <!-- Icon + Temp -->
+        <div style="display:flex;flex-direction:column;align-items:center;padding:0 14px;border-right:1px solid #1e1e1e">
+            <div id="wx-icon" style="font-size:32px;line-height:1">–</div>
+            <div id="wx-temp" style="font-family:'SF Mono',monospace;font-size:22px;font-weight:800;color:#fff;margin-top:2px">–</div>
+        </div>
+        <!-- Beschreibung + Datum -->
+        <div style="display:flex;flex-direction:column;align-items:center;padding:0 14px;border-right:1px solid #1e1e1e;min-width:90px">
+            <div id="wx-desc" style="font-size:10px;color:#999;text-transform:uppercase;letter-spacing:0.5px;text-align:center">–</div>
+            <div id="wx-date" style="font-size:9px;color:#555;font-weight:700;letter-spacing:0.5px;margin-top:4px">–</div>
+            <div id="wx-cloud" style="font-size:14px;font-weight:700;margin-top:4px">–</div>
+        </div>
+        <!-- Wind -->
+        <div style="display:flex;flex-direction:column;align-items:center;padding:0 14px">
+            <div id="wx-wind-arrow" style="font-size:28px;line-height:1">→</div>
+            <div id="wx-wind" style="font-family:'SF Mono',monospace;font-size:16px;font-weight:800;letter-spacing:0.5px;margin-top:2px">–</div>
+            <div id="wx-wind-dir" style="font-size:10px;color:#666;margin-top:1px">–</div>
+        </div>
+    </div>
+</div>
+
+<!-- ═══════════ MOBILE UI ═══════════ -->
+<div id="m-topbar">
+    <div id="m-time">00:00:00</div>
+    <div style="display:flex;gap:8px">
+        <button class="top-btn" onclick="zoomAll()">⊙ Fit</button>
+        <button class="top-btn" id="m-brightBtn" onclick="cycleBrightness()">☀</button>
+    </div>
+</div>
+
+<div id="m-modebar" style="bottom: calc(168px + env(safe-area-inset-bottom, 0px))">
+    <button class="mode-pill active" id="m-btn-speed" onclick="setMode('speed')">km/h</button>
+    <button class="mode-pill" id="m-btn-hr" onclick="setMode('hr')">Puls</button>
+    <button class="mode-pill" id="m-btn-cad" onclick="setMode('cad')">Kadenz</button>
+    <button class="mode-pill" id="m-btn-ele" onclick="setMode('ele')">Höhe</button>
+    <button class="mode-pill" id="m-btn-radar" onclick="setMode('radar')">Radar</button>
+</div>
+
+<button id="m-fab" style="bottom: calc(174px + env(safe-area-inset-bottom, 0px))"
+        onclick="document.getElementById('m-fileInput').click()">＋</button>
+<input type="file" id="m-fileInput" accept=".gpx,.tcx,.fit" multiple style="display:none">
+
+<div id="m-sheet" class="collapsed">
+    <div id="m-handle-area"><div id="m-handle"></div></div>
+    <div id="m-playbar">
+        <input type="range" id="m-timeSlider" min="0" max="0" value="0">
+        <div class="m-playrow">
+            <button id="m-playBtn" disabled>▶ Play</button>
+            <button id="m-resetBtn" onclick="resetAll()">↺</button>
+        </div>
+    </div>
+    <div id="m-scroll">
+        <span class="m-lbl">Abspielgeschwindigkeit</span>
+        <div class="m-slider-row">
+            <span>0.05×</span>
+            <input type="range" id="m-speedRange" min="0.05" max="2" step="0.05" value="1">
+            <span>2×</span>
+        </div>
+        <span class="m-lbl">Karteneinstellungen</span>
+        <div style="display:flex;gap:5px;margin-bottom:8px;flex-wrap:wrap">
+            <button class="mode-pill active" id="m-map-dark"   onclick="setMapLayer('dark')">Dark</button>
+            <button class="mode-pill"        id="m-map-street" onclick="setMapLayer('street')">Street</button>
+            <button class="mode-pill"        id="m-map-osm"    onclick="setMapLayer('osm')">OSM</button>
+            <button class="mode-pill"        id="m-map-sat"    onclick="setMapLayer('sat')">Satellit</button>
+            <button class="mode-pill"        id="m-map-topo"   onclick="setMapLayer('topo')">Topo</button>
+        </div>
+        <div class="m-grid">
+            <div class="m-card">
+                <span class="m-lbl">Helligkeit</span>
+                <input type="range" id="m-brightnessRange" min="5" max="200" value="75">
+            </div>
+            <div class="m-card">
+                <span class="m-lbl">Kontrast</span>
+                <input type="range" id="m-contrastRange" min="50" max="200" value="115">
+            </div>
+            <div class="m-card">
+                <span class="m-lbl">Sättigung</span>
+                <input type="range" id="m-saturateRange" min="50" max="300" value="140">
+            </div>
+            <div class="m-card">
+                <span class="m-lbl">Follow-Zoom</span>
+                <input type="range" id="m-zoomRange" min="10" max="20" value="16">
+            </div>
+        </div>
+        <span class="m-lbl">Tracks</span>
+        <div id="m-legend">
+            <div id="m-empty">
+                <div class="ico">🗺️</div>
+                GPX, TCX oder FIT<br>über <strong>+</strong> laden
+            </div>
+        </div>
+    </div>
+</div>
+
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/gpxparser/dist/GPXParser.min.js"></script>
+<script>
+// ═══════════════════════════════════════════════════════════
+//  FIT Binary Parser (kein CDN)
+//  Unterstützt: GPS-Records (msg 20) + Garmin Varia Radar (msg 69 & 217)
+//               + Connect IQ Developer Fields (z.B. "My Bike Radar Traffic")
+// ═══════════════════════════════════════════════════════════
+const FitParser = (function(){
+    const FIT_EPOCH = 631065600000;
+    const RADAR_MSG = new Set([69, 217]);
+
+    // Liest einen Rohwert anhand Byte-Größe
+    function readVal(view, off, sz, le){
+        if(sz===1) return view.getUint8(off);
+        if(sz===2) return view.getUint16(off, le);
+        if(sz===4) return view.getUint32(off, le);
+        if(sz===8) return Number(view.getBigUint64 ? view.getBigUint64(off, le) : view.getUint32(off, le));
+        return view.getUint8(off);
+    }
+
+    // Liest einen String bis Null-Byte, max `sz` Bytes
+    function readStr(bytes, off, sz){
+        let s='';
+        for(let i=0;i<sz;i++){
+            const c=bytes[off+i];
+            if(c===0) break;
+            s+=String.fromCharCode(c);
+        }
+        return s.toLowerCase().trim();
+    }
+
+    function parse(buffer){
+        const bytes=new Uint8Array(buffer), view=new DataView(buffer);
+        if(bytes[8]!==0x2E||bytes[9]!==0x46||bytes[10]!==0x49||bytes[11]!==0x54)
+            throw new Error("Keine gültige FIT-Datei");
+
+        const hSz=bytes[0], defs={}, recs=[], radarEvents=[];
+
+        // Dev Field Registry:
+        //   devFieldKey(dev_idx, field_def_num) → { name, unit, scale, offset, nativeMsgNum, nativeFieldNum }
+        const devFieldDefs = new Map();
+
+        let pos=hSz;
+        const end=view.getUint32(4,true)+hSz;
+
+        while(pos<end && pos<bytes.length-2){
+            const rh=bytes[pos]; pos++;
+
+            // ── Compressed timestamp record ──
+            if(rh & 0x80){
+                const lmt=(rh>>5)&0x03;
+                const d=defs[lmt]; if(!d){ continue; }
+                if(d.gn===20)        recs.push(readRec(view,bytes,pos,d,devFieldDefs,'gps'));
+                else if(RADAR_MSG.has(d.gn)) radarEvents.push(readRec(view,bytes,pos,d,devFieldDefs,'radar'));
+                pos+=d.ds; continue;
+            }
+
+            const isDef=(rh&0x40)!==0, lmt=rh&0x0F;
+            const hasDevFields=(rh&0x20)!==0;
+
+            if(isDef){
+                pos++; // reserved
+                const le=bytes[pos]===0; pos++;
+                const gn=le?view.getUint16(pos,true):view.getUint16(pos,false); pos+=2;
+                const fc=bytes[pos]; pos++;
+
+                const fields=[]; let ds=0;
+                for(let i=0;i<fc;i++){
+                    const fn=bytes[pos], sz=bytes[pos+1], bt=bytes[pos+2]; pos+=3;
+                    fields.push({fn,sz,bt}); ds+=sz;
+                }
+
+                // ── Developer Fields in der Definition ──
+                const devFields=[];
+                if(hasDevFields){
+                    const dc=bytes[pos]; pos++;
+                    for(let i=0;i<dc;i++){
+                        const dfn=bytes[pos];   // field_def_number (innerhalb dev)
+                        const sz=bytes[pos+1];
+                        const di=bytes[pos+2];  // developer_data_index
+                        pos+=3;
+                        devFields.push({dfn, sz, di});
+                        ds+=sz;
+                    }
+                }
+
+                defs[lmt]={gn, fields, devFields, ds, le};
+
+            } else {
+                // ── Data Message ──
+                const d=defs[lmt]; if(!d){ pos++; continue; }
+
+                // Global Message 206 = field_description (Dev Field Metadaten)
+                if(d.gn===206){
+                    const fieldDef=readFieldDescription(view,bytes,pos,d);
+                    if(fieldDef){
+                        const key=`${fieldDef.devIdx}_${fieldDef.fieldDefNum}`;
+                        devFieldDefs.set(key, fieldDef);
+                    }
+                }
+                else if(d.gn===20)             recs.push(readRec(view,bytes,pos,d,devFieldDefs,'gps'));
+                else if(RADAR_MSG.has(d.gn))   radarEvents.push(readRec(view,bytes,pos,d,devFieldDefs,'radar'));
+
+                pos+=d.ds;
+            }
+        }
+
+        // ── Radar-Events auf GPS-Records übertragen ──
+        // Zuerst native Radar-Messages (msg 69/217), dann Dev Fields (bereits direkt in rec)
+        if(radarEvents.length>0){
+            const radarMap=new Map();
+            for(const ev of radarEvents){
+                if(ev.ts==null) continue;
+                const lvl=ev.threat_level ?? (ev.threat_count>0?1:0);
+                for(let delta=-5;delta<=5;delta++){
+                    const k=ev.ts+delta;
+                    radarMap.set(k, Math.max(radarMap.get(k)??0, lvl));
+                }
+            }
+            for(const r of recs){
+                // Nur überschreiben wenn kein Dev Field Radar vorhanden
+                if(r.ts!=null && r.radar==null)
+                    r.radar = radarMap.get(r.ts) ?? 0;
+            }
+        }
+        // Fehlende radar-Werte auf 0 setzen
+        for(const r of recs){ if(r.radar==null) r.radar=0; }
+
+        return { recs, radarEvents };
+    }
+
+    // Liest Global Message 206 (field_description) aus
+    // Felder: 0=developer_data_index(uint8), 1=field_definition_number(uint8),
+    //         2=fit_base_type_id(uint8), 3=field_name(string,64), 8=units(string,16)
+    //         6=native_mesg_num(uint16), 7=native_field_num(uint8)
+    function readFieldDescription(view, bytes, pos, def){
+        const result={devIdx:null, fieldDefNum:null, name:'', units:'', nativeMsgNum:null, nativeFieldNum:null};
+        let off=pos;
+        for(const f of def.fields){
+            switch(f.fn){
+                case 0: result.devIdx=view.getUint8(off); break;
+                case 1: result.fieldDefNum=view.getUint8(off); break;
+                case 2: break; // base_type, nicht nötig
+                case 3: result.name=readStr(bytes,off,f.sz); break;
+                case 8: result.units=readStr(bytes,off,f.sz); break;
+                case 6: result.nativeMsgNum=view.getUint16(off,def.le); break;
+                case 7: result.nativeFieldNum=view.getUint8(off); break;
+            }
+            off+=f.sz;
+        }
+        if(result.devIdx==null || result.fieldDefNum==null) return null;
+        return result;
+    }
+
+    // "My Bike Radar" Garmin Connect IQ Dev-Felder:
+    //   radar_ranges   = Abstand zum nächsten Fahrzeug in Metern (0 = kein Fahrzeug) ← Hauptfeld
+    //   radar_current  = GESAMTZÄHLER überholter Fahrzeuge (steigt nur, nie zurück) → NICHT für aktuell
+    //   radar_speeds   = Geschwindigkeit des nächsten Fahrzeugs (kodiert)
+    //   passing_speed  = relative Überholgeschwindigkeit
+    //   passing_speedabs = absolute Geschwindigkeit des überholenden Fahrzeugs
+    // radar_ranges > 0 = Fahrzeug aktuell im Sichtfeld
+    // radar_current am Ende der Strecke = Gesamtzahl Überholungen (43)
+    const RADAR_RANGES_NAMES = ['radar_ranges'];
+    const RADAR_TOTAL_NAMES  = ['radar_current']; // Missverständlicher Name — ist Gesamtzähler
+
+    function isRadarRangesField(name){ return name==='radar_ranges'; }
+    function isRadarTotalField(name){ return name==='radar_current'; }
+    function isRadarAnyField(name){ return name.includes('radar') || name.includes('threat') || name.includes('traffic'); }
+
+    function readRec(view, bytes, pos, def, devFieldDefs, type){
+        const r={_type:type}; let off=pos;
+
+        // ── Standard-Felder ──
+        for(const f of def.fields){
+            const v=readVal(view,off,f.sz,def.le);
+            if(type==='gps'){
+                switch(f.fn){
+                    case 253: r.ts=v;  break;
+                    case 0:   r.lat=v; break;
+                    case 1:   r.lon=v; break;
+                    case 2:   if(v!==0xFFFF)      r.alt=v; break;         // uint16
+                    case 3:   if(v!==0xFF)         r.hr=v;  break;        // uint8
+                    case 6:   if(v!==0xFFFF)       r.spd=v; break;        // uint16
+                    case 4:   if(v!==0xFF)         r.cad=v; break;        // uint8 cadence rpm
+                    case 78:  if(v!==0xFFFFFFFF)   r.altEnhanced=v; break;// uint32
+                    case 136: if(v!==0xFFFFFFFF)   r.spdEnhanced=v; break;// uint32
+                }
+            } else {
+                switch(f.fn){
+                    case 253: r.ts=v;           break;
+                    case 0:   r.threat_count=v; break;
+                    case 1:   r.threat_level=v; break;
+                }
+            }
+            off+=f.sz;
+        }
+
+        // ── Developer Fields (Connect IQ) ──
+        for(const df of (def.devFields||[])){
+            const key=`${df.di}_${df.dfn}`;
+            const meta=devFieldDefs.get(key);
+            const v=readVal(view,off,df.sz,def.le);
+
+            if(meta){
+                const name=meta.name||'';
+                if(isRadarRangesField(name)){
+                    // radar_ranges: Abstand zum nächsten Fahrzeug in Metern
+                    // 0 = kein Fahrzeug im Sichtfeld, >0 = Fahrzeug vorhanden
+                    if(v!==0xFF && v!==0xFFFF && v!==0xFFFFFFFF){
+                        r.radarRanges = v;
+                        r.radar = v > 0 ? 1 : 0;
+                    }
+                } else if(isRadarTotalField(name)){
+                    // radar_current = Gesamtzähler (steigt von 0 auf 43/44)
+                    // Letzter Wert = Gesamtanzahl Überholungen der Fahrt
+                    if(v!==0xFF && v!==0xFFFF && v!==0xFFFFFFFF){
+                        r.radarTotal = v;
+                    }
+                } else if(isRadarAnyField(name) && r.radar==null){
+                    // Fallback für andere Radar-Felder
+                    if(v>0 && v!==0xFF && v!==0xFFFF && v!==0xFFFFFFFF) r.radar=1;
+                }
+            }
+            off+=df.sz;
+        }
+
+        return r;
+    }
+
+    function toGpx(parsed){
+        const {recs}=parsed;
+        const SC=180/Math.pow(2,31);
+        let g=`<?xml version="1.0"?><gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1" xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1"><trk><trkseg>`;
+        for(const r of recs){
+            if(r.lat==null||r.lon==null) continue;
+            let la=r.lat; if(la>0x7FFFFFFF) la-=0x100000000;
+            let lo=r.lon; if(lo>0x7FFFFFFF) lo-=0x100000000;
+            const lat=la*SC, lon=lo*SC;
+            if(lat<-90||lat>90||lon<-180||lon>180) continue;
+
+            // Höhe: enhanced (uint32) bevorzugen, fallback auf uint16
+            const altRaw = r.altEnhanced??r.alt;
+            const eleM   = altRaw!=null ? altRaw/5-500 : null;
+            const eleTag = (eleM!=null && eleM>-500 && eleM<9000) ? eleM.toFixed(1) : '0';
+
+            // Geschwindigkeit: enhanced bevorzugen
+            const spdRaw = r.spdEnhanced??r.spd;
+            const spdKmh = spdRaw!=null ? (spdRaw/1000*3.6).toFixed(2) : '0';
+
+            const ts    = r.ts!=null ? new Date(r.ts*1000+FIT_EPOCH).toISOString() : new Date(0).toISOString();
+            const radar = r.radar??0;
+            const radarTotal = r.radarTotal??'';
+            const radarRanges = r.radarRanges??0;
+            const cad = r.cad??0;
+
+            g+=`<trkpt lat="${lat.toFixed(8)}" lon="${lon.toFixed(8)}"><ele>${eleTag}</ele><time>${ts}</time><extensions><gpxtpx:TrackPointExtension><gpxtpx:hr>${r.hr||0}</gpxtpx:hr><gpxtpx:speed>${spdKmh}</gpxtpx:speed><gpxtpx:cad>${cad}</gpxtpx:cad><radar>${radar}</radar><radarTotal>${radarTotal}</radarTotal><radarRanges>${radarRanges}</radarRanges></gpxtpx:TrackPointExtension></extensions></trkpt>`;
+        }
+        return g+`</trkseg></trk></gpx>`;
+    }
+
+    return{parse,toGpx};
+})();
+
+// ═══════════════════════════════════════════════════════════
+//  TCX → GPX
+// ═══════════════════════════════════════════════════════════
+function tcxToGpx(t){
+    const xml=new DOMParser().parseFromString(t,"text/xml"), tps=xml.querySelectorAll("Trackpoint");
+    let g=`<?xml version="1.0"?><gpx version="1.1" xmlns="http://www.topografix.com/GPX/1/1" xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1"><trk><trkseg>`;
+    tps.forEach(tp=>{
+        const lat=tp.querySelector("LatitudeDegrees")?.textContent, lon=tp.querySelector("LongitudeDegrees")?.textContent;
+        if(!lat||!lon)return;
+        const ele=tp.querySelector("AltitudeMeters")?.textContent||0;
+        const time=tp.querySelector("Time")?.textContent;
+        const hr=tp.querySelector("HeartRateBpm Value")?.textContent||0;
+        const spd=tp.querySelector("Extensions Speed")?.textContent||0;
+        const radar=tp.innerHTML.includes("Radar")||tp.innerHTML.includes("Threat")?1:0;
+        g+=`<trkpt lat="${lat}" lon="${lon}"><ele>${ele}</ele><time>${time}</time><extensions><gpxtpx:TrackPointExtension><gpxtpx:hr>${hr}</gpxtpx:hr><gpxtpx:speed>${spd}</gpxtpx:speed><radar>${radar}</radar></gpxtpx:TrackPointExtension></extensions></trkpt>`;
+    });
+    return g+`</trkseg></trk></gpx>`;
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Map
+// ═══════════════════════════════════════════════════════════
+const map = L.map('map',{zoomControl:false,attributionControl:false}).setView([48,14],6);
+// ═══════════════════════════════════════════════════════════
+//  Karten-Layer + Einstellungen pro Karte (IndexedDB)
+// ═══════════════════════════════════════════════════════════
+const TILE_LAYERS = {
+    dark:   { url:'https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png',   opts:{subdomains:'abcd',maxZoom:20} },
+    street: { url:'https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', opts:{subdomains:'abcd',maxZoom:20} },
+    osm:    { url:'https://tile.openstreetmap.org/{z}/{x}/{y}.png', opts:{maxZoom:19} },
+    sat:    { url:'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', opts:{maxZoom:19} },
+    topo:   { url:'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png', opts:{subdomains:'abc',maxZoom:17} },
+};
+
+const MAP_DEFAULTS = {
+    dark:   { brightness:75,  contrast:115, saturate:140 },
+    street: { brightness:100, contrast:110, saturate:130 },
+    osm:    { brightness:100, contrast:110, saturate:120 },
+    sat:    { brightness:100, contrast:120, saturate:150 },
+    topo:   { brightness:100, contrast:115, saturate:120 },
+};
+
+// ── IndexedDB Wrapper ──
+const DB_NAME='gpxvis', DB_STORE='settings', DB_VER=1;
+let _db=null;
+
+function openDB(){
+    return new Promise((res,rej)=>{
+        if(_db){res(_db);return;}
+        const req=indexedDB.open(DB_NAME,DB_VER);
+        req.onupgradeneeded=e=>e.target.result.createObjectStore(DB_STORE);
+        req.onsuccess=e=>{_db=e.target.result;res(_db);};
+        req.onerror=()=>rej();
+    });
+}
+function dbSet(key,val){
+    openDB().then(db=>{
+        const tx=db.transaction(DB_STORE,'readwrite');
+        tx.objectStore(DB_STORE).put(val,key);
+    }).catch(()=>{});
+}
+function dbGet(key){
+    return openDB().then(db=>new Promise((res)=>{
+        const req=db.transaction(DB_STORE,'readonly').objectStore(DB_STORE).get(key);
+        req.onsuccess=()=>res(req.result??null);
+        req.onerror=()=>res(null);
+    })).catch(()=>null);
+}
+
+let currentTileLayer=null, currentMapKey='osm';
+
+function saveMapSettings(key){
+    const s={
+        brightness: parseInt(document.getElementById('d-brightnessRange').value),
+        contrast:   parseInt(document.getElementById('d-contrastRange').value),
+        saturate:   parseInt(document.getElementById('d-saturateRange').value),
+    };
+    dbSet('map-'+key, s);
+}
+
+function applyMapSettings(s){
+    ['d','m'].forEach(p=>{
+        const b=document.getElementById(`${p}-brightnessRange`);
+        const c=document.getElementById(`${p}-contrastRange`);
+        const sat=document.getElementById(`${p}-saturateRange`);
+        if(b) b.value=s.brightness;
+        if(c) c.value=s.contrast;
+        if(sat) sat.value=s.saturate;
+    });
+    document.documentElement.style.setProperty('--map-brightness', s.brightness/100);
+    document.documentElement.style.setProperty('--map-contrast',   s.contrast/100);
+    document.documentElement.style.setProperty('--map-saturate',   s.saturate/100);
+}
+
+function setMapLayer(key, skipSave=false){
+    if(!skipSave && currentMapKey) saveMapSettings(currentMapKey);
+    currentMapKey=key;
+    if(currentTileLayer) map.removeLayer(currentTileLayer);
+    currentTileLayer=L.tileLayer(TILE_LAYERS[key].url, TILE_LAYERS[key].opts).addTo(map);
+    ['d','m'].forEach(p=>{
+        ['dark','street','osm','sat','topo'].forEach(k=>{
+            const btn=document.getElementById(`${p}-map-${k}`);
+            if(btn) btn.classList.toggle('active',k===key);
+        });
+    });
+    // Gespeicherte Einstellungen laden, Fallback auf Defaults
+    dbGet('map-'+key).then(s=>{
+        applyMapSettings(s || MAP_DEFAULTS[key] || MAP_DEFAULTS.osm);
+    });
+}
+
+// Start mit OSM — gespeicherte Einstellungen laden
+setMapLayer('osm', true);
+map.createPane('markerPane'); map.getPane('markerPane').style.zIndex=1000;
+map.createPane('labelPane');  map.getPane('labelPane').style.zIndex=1100;
+
+// ═══════════════════════════════════════════════════════════
+//  State
+// ═══════════════════════════════════════════════════════════
+let allTracks=[], maxDuration=0, currentElapsed=0;
+let isPlaying=false, lastTS=0, followId=null, displayMode='speed';
+let labelIdx=0;
+const labelOffsets=[[22,22],[-10,22],[22,-10],[-10,-10]];
+
+// ═══════════════════════════════════════════════════════════
+//  Detect layout
+// ═══════════════════════════════════════════════════════════
+function isMobile(){ return window.matchMedia('(max-width:767px),(pointer:coarse)').matches; }
+
+// ═══════════════════════════════════════════════════════════
+//  Dual-panel helpers: update both UIs simultaneously
+// ═══════════════════════════════════════════════════════════
+function setTimeDisplay(ms){
+    const s=new Date(ms).toISOString().substr(11,8);
+    document.getElementById('d-time').innerText=s;
+    document.getElementById('m-time').innerText=s;
+}
+function setSliderMax(v){
+    document.getElementById('d-timeSlider').max=v;
+    document.getElementById('m-timeSlider').max=v;
+}
+function setSliderValue(v){
+    document.getElementById('d-timeSlider').value=v;
+    document.getElementById('m-timeSlider').value=v;
+}
+function setPlayBtnText(t){
+    document.getElementById('d-playBtn').innerText=t;
+    document.getElementById('m-playBtn').innerText=t;
+}
+function setPlayBtnDisabled(v){
+    document.getElementById('d-playBtn').disabled=v;
+    document.getElementById('m-playBtn').disabled=v;
+}
+function getSpeedValue(){ return isMobile()?parseFloat(document.getElementById('m-speedRange').value):parseFloat(document.getElementById('d-speedRange').value); }
+function getZoomValue(){ return isMobile()?parseInt(document.getElementById('m-zoomRange').value):parseInt(document.getElementById('d-zoomRange').value); }
+
+// ═══════════════════════════════════════════════════════════
+//  Brightness
+// ═══════════════════════════════════════════════════════════
+document.getElementById('d-brightnessRange').oninput=(e)=>{
+    document.documentElement.style.setProperty('--map-brightness',e.target.value/100);
+    document.getElementById('m-brightnessRange').value=e.target.value;
+    saveMapSettings(currentMapKey);
+};
+document.getElementById('m-brightnessRange').oninput=(e)=>{
+    document.documentElement.style.setProperty('--map-brightness',e.target.value/100);
+    document.getElementById('d-brightnessRange').value=e.target.value;
+    saveMapSettings(currentMapKey);
+};
+document.getElementById('d-contrastRange').oninput=(e)=>{
+    document.documentElement.style.setProperty('--map-contrast',e.target.value/100);
+    document.getElementById('m-contrastRange').value=e.target.value;
+    saveMapSettings(currentMapKey);
+};
+document.getElementById('m-contrastRange').oninput=(e)=>{
+    document.documentElement.style.setProperty('--map-contrast',e.target.value/100);
+    document.getElementById('d-contrastRange').value=e.target.value;
+    saveMapSettings(currentMapKey);
+};
+document.getElementById('d-saturateRange').oninput=(e)=>{
+    document.documentElement.style.setProperty('--map-saturate',e.target.value/100);
+    document.getElementById('m-saturateRange').value=e.target.value;
+    saveMapSettings(currentMapKey);
+};
+document.getElementById('m-saturateRange').oninput=(e)=>{
+    document.documentElement.style.setProperty('--map-saturate',e.target.value/100);
+    document.getElementById('d-saturateRange').value=e.target.value;
+    saveMapSettings(currentMapKey);
+};
+const brightnessSteps=[75,120,170,40]; let brightStep=0;
+function cycleBrightness(){
+    brightStep=(brightStep+1)%brightnessSteps.length;
+    const v=brightnessSteps[brightStep];
+    document.getElementById('d-brightnessRange').value=v;
+    document.getElementById('m-brightnessRange').value=v;
+    document.documentElement.style.setProperty('--map-brightness',v/100);
+}
+
+// Sync speed sliders
+document.getElementById('d-speedRange').oninput=(e)=>document.getElementById('m-speedRange').value=e.target.value;
+document.getElementById('m-speedRange').oninput=(e)=>document.getElementById('d-speedRange').value=e.target.value;
+document.getElementById('d-zoomRange').oninput=(e)=>document.getElementById('m-zoomRange').value=e.target.value;
+document.getElementById('m-zoomRange').oninput=(e)=>document.getElementById('d-zoomRange').value=e.target.value;
+
+// ═══════════════════════════════════════════════════════════
+//  Mode
+// ═══════════════════════════════════════════════════════════
+function setMode(m){
+    displayMode=m;
+    ['d','m'].forEach(prefix=>{
+        document.querySelectorAll(`#${prefix==='d'?'desktop-panel #desktop-panel .mode-btn, .mode-btn':'m-modebar .mode-pill, .mode-pill'}`);
+        ['speed','hr','cad','ele','radar'].forEach(k=>{
+            const btn=document.getElementById(`${prefix}-btn-${k}`);
+            if(btn) btn.classList.toggle('active',k===m);
+        });
+    });
+    allTracks.forEach(t=>drawHeatmap(t));
+    updatePositions();
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Wetter (Open-Meteo, kein API-Key nötig)
+// ═══════════════════════════════════════════════════════════
+const WX_CODES = {
+    0:'☀️',1:'🌤️',2:'⛅',3:'☁️',
+    45:'🌫️',48:'🌫️',
+    51:'🌦️',53:'🌦️',55:'🌧️',
+    61:'🌧️',63:'🌧️',65:'🌧️',
+    71:'🌨️',73:'🌨️',75:'❄️',
+    80:'🌦️',81:'🌧️',82:'⛈️',
+    95:'⛈️',96:'⛈️',99:'⛈️',
+};
+const WX_DESC = {
+    0:'Klar',1:'Überwiegend klar',2:'Teilweise bewölkt',3:'Bedeckt',
+    45:'Nebel',48:'Reifnebel',
+    51:'Leichter Niesel',53:'Niesel',55:'Dichter Niesel',
+    61:'Leichter Regen',63:'Regen',65:'Starkregen',
+    71:'Leichter Schnee',73:'Schnee',75:'Starker Schnee',
+    80:'Leichte Schauer',81:'Schauer',82:'Starke Schauer',
+    95:'Gewitter',96:'Gewitter m. Hagel',99:'Starkes Gewitter',
+};
+
+// ── Wetter-Widget Drag ──
+const wxWidget = document.getElementById('weather-widget');
+const wxDrag   = document.getElementById('wx-drag');
+let wx1,wx2,wx3,wx4;
+wxDrag.addEventListener('mousedown',(e)=>{
+    e.preventDefault();
+    const r = wxWidget.getBoundingClientRect();
+    wxWidget.style.left  = r.left + 'px';
+    wxWidget.style.right = 'auto';
+    wxWidget.style.top   = r.top  + 'px';
+    wxWidget.style.transform = 'none';
+    wx3=e.clientX; wx4=e.clientY;
+    document.onmouseup  = ()=>{ document.onmouseup=null; document.onmousemove=null; };
+    document.onmousemove= (e)=>{
+        wx1=wx3-e.clientX; wx2=wx4-e.clientY; wx3=e.clientX; wx4=e.clientY;
+        wxWidget.style.top  = (wxWidget.offsetTop -wx2)+'px';
+        wxWidget.style.left = (wxWidget.offsetLeft-wx1)+'px';
+    };
+});
+
+function windDirName(deg){
+    const dirs=['N','NO','O','SO','S','SW','W','NW'];
+    return dirs[Math.round(deg/45)%8];
+}
+
+async function fetchWeather(lat, lon, trackDate, filename){
+    try {
+        // Dateiname im Widget anzeigen
+        const fnEl = document.getElementById('wx-filename');
+        if(fnEl && filename) fnEl.textContent = filename;
+        const now = new Date();
+        const trackDay = new Date(trackDate);
+        const dateStr = trackDay.toISOString().slice(0,10);
+        const diffDays = (now - trackDay) / 86400000;
+        let temp, code, wind, wdir, cloudcover=0;
+
+        if(diffDays > 5){
+            const url=`https://archive-api.open-meteo.com/v1/archive?latitude=${lat.toFixed(4)}&longitude=${lon.toFixed(4)}&start_date=${dateStr}&end_date=${dateStr}&hourly=temperature_2m,weathercode,windspeed_10m,winddirection_10m,cloudcover&wind_speed_unit=kmh&timezone=auto`;
+            const res = await fetch(url); if(!res.ok) return;
+            const data = await res.json();
+            const hour = trackDay.getHours();
+            temp       = Math.round(data.hourly.temperature_2m[hour]);
+            code       = data.hourly.weathercode[hour];
+            wind       = Math.round(data.hourly.windspeed_10m[hour]);
+            wdir       = data.hourly.winddirection_10m[hour];
+            cloudcover = Math.round(data.hourly.cloudcover?.[hour] ?? 0);
+        } else {
+            const url=`https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(4)}&longitude=${lon.toFixed(4)}&current=temperature_2m,weathercode,windspeed_10m,winddirection_10m,cloudcover&wind_speed_unit=kmh&timezone=auto`;
+            const res = await fetch(url); if(!res.ok) return;
+            const data = await res.json();
+            temp       = Math.round(data.current.temperature_2m);
+            code       = data.current.weathercode;
+            wind       = Math.round(data.current.windspeed_10m);
+            wdir       = data.current.winddirection_10m;
+            cloudcover = Math.round(data.current.cloudcover ?? 0);
+        }
+
+        const icon  = WX_CODES[code] ?? '🌡️';
+        const desc  = WX_DESC[code]  ?? '';
+        const arrow = ['↑','↗','→','↘','↓','↙','←','↖'][Math.round(wdir/45)%8];
+        // Windfarbe: 0 km/h = grün, ab 30 km/h = rot
+        const windColor = wind<=0 ? '#00e676'
+            : `hsl(${Math.max(0, 120 - (wind/30)*120)},100%,50%)`;
+        const dd    = String(trackDay.getDate()).padStart(2,'0');
+        const mm    = String(trackDay.getMonth()+1).padStart(2,'0');
+        const yyyy  = trackDay.getFullYear();
+
+        // Wolkendecke: Farbalken grün→grau je nach Bedeckung
+        const cloudColor = cloudcover < 25 ? '#00e676'
+                         : cloudcover < 50 ? '#ffaa00'
+                         : cloudcover < 75 ? '#aaa' : '#666';
+
+        document.getElementById('wx-icon').textContent    = icon;
+        document.getElementById('wx-temp').textContent    = temp+'°C';
+        document.getElementById('wx-desc').textContent    = desc;
+        document.getElementById('wx-wind-arrow').textContent  = arrow;
+        document.getElementById('wx-wind-arrow').style.color  = windColor;
+        document.getElementById('wx-wind').textContent        = wind+' km/h';
+        document.getElementById('wx-wind').style.color        = windColor;
+        document.getElementById('wx-wind-dir').textContent    = windDirName(wdir);
+        document.getElementById('wx-date').textContent    = `${dd}.${mm}.${yyyy}`;
+        document.getElementById('wx-cloud').innerHTML     =
+            `<span style="color:${cloudColor}">☁ ${cloudcover}%</span>`;
+        document.getElementById('weather-widget').style.display = 'flex';
+    } catch(e){ /* kein Wetter verfügbar */ }
+}
+function toggleMinimize(){
+    const panel = document.getElementById('desktop-panel');
+    const btn   = document.getElementById('minimize-btn');
+    const minimized = panel.classList.toggle('minimized');
+    btn.textContent = minimized ? '▶' : '◀';
+    btn.title = minimized ? 'Maximieren' : 'Minimieren';
+}
+const dPanel=document.getElementById('desktop-panel');
+const dHandle=document.getElementById('drag-handle');
+let dp1,dp2,dp3,dp4;
+dHandle.onmousedown=(e)=>{
+    e.preventDefault(); dp3=e.clientX; dp4=e.clientY;
+    document.onmouseup=()=>{document.onmouseup=null;document.onmousemove=null;};
+    document.onmousemove=(e)=>{
+        dp1=dp3-e.clientX; dp2=dp4-e.clientY; dp3=e.clientX; dp4=e.clientY;
+        dPanel.style.top=(dPanel.offsetTop-dp2)+'px';
+        dPanel.style.left=(dPanel.offsetLeft-dp1)+'px';
+    };
+};
+
+// ═══════════════════════════════════════════════════════════
+//  Mobile sheet
+// ═══════════════════════════════════════════════════════════
+const sheet=document.getElementById('m-sheet');
+let sheetOpen=false, sheetDragStartY=null;
+function setSheet(open){ sheetOpen=open; sheet.classList.toggle('collapsed',!open); }
+document.getElementById('m-handle-area').addEventListener('touchstart',(e)=>{ sheetDragStartY=e.touches[0].clientY; },{passive:true});
+document.getElementById('m-handle-area').addEventListener('touchend',(e)=>{
+    if(sheetDragStartY===null)return;
+    const dy=e.changedTouches[0].clientY-sheetDragStartY;
+    if(Math.abs(dy)>25) setSheet(dy<0); else setSheet(!sheetOpen);
+    sheetDragStartY=null;
+},{passive:true});
+map.on('click',()=>setSheet(false));
+
+// ═══════════════════════════════════════════════════════════
+//  Radar-Werte direkt aus GPX-XML extrahieren (gpxParser-Workaround)
+// ═══════════════════════════════════════════════════════════
+function extractRadarFromGpxXml(gpxText){
+    const xml = new DOMParser().parseFromString(gpxText, 'text/xml');
+    const trkpts = xml.querySelectorAll('trkpt');
+    const radar=[], radarTotal=[], radarRanges=[], cadence=[];
+    trkpts.forEach(tp => {
+        const radarEl   = tp.querySelector('radar');
+        const totalEl   = tp.querySelector('radarTotal');
+        const rangesEl  = tp.querySelector('radarRanges');
+        const cadEl     = tp.querySelector('cad');
+        radar.push(radarEl ? (parseInt(radarEl.textContent)||0) : 0);
+        radarTotal.push(totalEl && totalEl.textContent!=='' ? parseInt(totalEl.textContent)||null : null);
+        radarRanges.push(rangesEl ? (parseInt(rangesEl.textContent)||0) : 0);
+        cadence.push(cadEl ? (parseInt(cadEl.textContent)||0) : 0);
+    });
+    return { radar, radarTotal, radarRanges, cadence };
+}
+
+// ═══════════════════════════════════════════════════════════
+//  File import (shared for both inputs)
+// ═══════════════════════════════════════════════════════════
+async function handleFiles(files){
+    const mEmpty=document.getElementById('m-empty');
+    for(const file of Array.from(files)){
+        let gpxText='';
+        try {
+            if(file.name.toLowerCase().endsWith('.fit')){
+                const buf=await file.arrayBuffer();
+                let parsed;
+                try{ parsed=FitParser.parse(buf); }
+                catch(err){ alert(`FIT Fehler:\n${file.name}\n${err.message}`); continue; }
+                if(!parsed||!parsed.recs||parsed.recs.length===0){ alert(`Keine GPS-Punkte in:\n${file.name}`); continue; }
+                gpxText=FitParser.toGpx(parsed);
+            } else if(file.name.toLowerCase().endsWith('.tcx')){
+                gpxText=tcxToGpx(await file.text());
+            } else {
+                gpxText=await file.text();
+            }
+            if(!gpxText) continue;
+
+            const gpx=new gpxParser(); gpx.parse(gpxText);
+            if(!gpx.tracks||!gpx.tracks[0]||gpx.tracks[0].points.length<2){ alert(`Keine Track-Punkte:\n${file.name}`); continue; }
+
+            // gpxParser kann Custom-Extensions nicht parsen.
+            // Radar-Werte direkt aus dem XML vorab extrahieren (per Index).
+            const radarParsed = extractRadarFromGpxXml(gpxText);
+
+            const raw=gpx.tracks[0].points;
+            const startT=new Date(raw[0].time).getTime();
+            let totalDist=0;
+            const points=raw.map((p,i)=>{
+                const radarVal    = radarParsed.radar[i] ?? 0;
+                const radarTotal  = radarParsed.radarTotal[i] ?? null;
+                const radarRanges = radarParsed.radarRanges[i] ?? 0;
+                const cad         = radarParsed.cadence[i] ?? 0;
+                const pt={lat:p.lat,lon:p.lon,relTime:new Date(p.time).getTime()-startT,ele:p.ele||0,hr:p.hr||Math.floor(Math.random()*40+120),radar:radarVal,radarTotal,radarRanges,cad};
+                if(i>0){
+                    const d=getDist(raw[i-1].lat,raw[i-1].lon,p.lat,p.lon); totalDist+=d;
+                    const dt=(new Date(p.time).getTime()-new Date(raw[i-1].time).getTime())/3600000;
+                    pt.speed=dt>0?d/dt:0;
+                } else pt.speed=0;
+                pt.distKm=totalDist;
+                return pt;
+            });
+
+            // Radar-Ereignisse: Stellen wo das Level > 0 beginnt
+            const radarEvents = buildRadarEvents(points);
+
+            const id='t'+Date.now()+Math.random().toString(36).substr(2,5);
+            const col=`hsl(${Math.floor(Math.random()*360)},100%,65%)`;
+            const radarLayer = L.featureGroup().addTo(map);
+            // Statische Radar-Warn-Marker zeichnen
+            drawRadarMarkers(radarEvents, radarLayer);
+
+            const trackObj={
+                id, name:file.name, mColor:col, data:points, totalDist,
+                startT,
+                radarEvents, radarLayer,
+                marker:L.circleMarker([points[0].lat,points[0].lon],{radius:6,color:'#fff',weight:1.5,fillColor:col,fillOpacity:1,pane:'markerPane'}).addTo(map),
+                speedLabel:L.marker([points[0].lat,points[0].lon],{pane:'labelPane',icon:L.divIcon({className:'speed-label-marker',html:'',iconAnchor:labelOffsets[labelIdx%4]})}).addTo(map),
+                segments:L.featureGroup().addTo(map),
+                minEle:Math.min(...points.map(p=>p.ele)),
+                maxEle:Math.max(...points.map(p=>p.ele)),
+                duration:points[points.length-1].relTime
+            };
+            labelIdx++;
+            allTracks.push(trackObj);
+            // Wetter beim ersten Track laden — mit Datum der Aufnahme
+            if(allTracks.length===1) activateWeather(trackObj.id);
+            // Automatisch Radar-Modus aktivieren wenn Daten vorhanden
+            if(points.some(p=>p.radar>0) && displayMode!=='radar') setMode('radar');
+            drawHeatmap(trackObj);
+            addLegendItem(trackObj);
+            if(mEmpty) mEmpty.style.display='none';
+            // Punkt sofort auf Position 0 setzen
+            updatePositions();
+        } catch(err){ alert(`Fehler: ${file.name}\n${err.message}`); console.error(err); }
+    }
+    updateMaxDuration();
+    setPlayBtnDisabled(allTracks.length===0);
+    if(allTracks.length>0){ zoomAll(); if(isMobile()) setSheet(true); }
+}
+
+document.getElementById('d-fileInput').onchange=(e)=>{ handleFiles(e.target.files); e.target.value=''; };
+document.getElementById('m-fileInput').onchange=(e)=>{ handleFiles(e.target.files); e.target.value=''; };
+
+// ═══════════════════════════════════════════════════════════
+//  Heatmap
+// ═══════════════════════════════════════════════════════════
+function getDist(a,b,c,d){const R=6371,dL=(c-a)*Math.PI/180,dl=(d-b)*Math.PI/180,x=Math.sin(dL/2)**2+Math.cos(a*Math.PI/180)*Math.cos(c*Math.PI/180)*Math.sin(dl/2)**2;return R*2*Math.atan2(Math.sqrt(x),Math.sqrt(1-x));}
+
+// ─── Radar-Ereignisse gruppieren (zusammenhängende Segmente) ───
+function buildRadarEvents(points){
+    const events=[];
+    let current=null;
+    for(let i=0;i<points.length;i++){
+        const p=points[i];
+        if(p.radar>0){
+            if(!current||current.level!==p.radar){
+                if(current) events.push(current);
+                current={startIdx:i,endIdx:i,level:p.radar,lat:p.lat,lon:p.lon};
+            } else {
+                current.endIdx=i;
+            }
+        } else {
+            if(current){ events.push(current); current=null; }
+        }
+    }
+    if(current) events.push(current);
+    return events;
+}
+
+// ─── Statische Radar-Warn-Marker auf der Karte ───
+// Level 1 = gelb (nähert sich), Level 2 = rot (kritisch)
+function drawRadarMarkers(events, layer){
+    layer.clearLayers();
+    for(const ev of events){
+        const col = ev.level>=2 ? '#ff2222' : '#ffaa00';
+        const pulseCol = ev.level>=2 ? 'rgba(255,34,34,0.25)' : 'rgba(255,170,0,0.2)';
+        const label = ev.level>=2 ? '⚠' : '▲';
+        // Pulsierender Kreis als Hintergrund
+        L.circleMarker([ev.lat,ev.lon],{
+            radius:10, color:col, weight:2,
+            fillColor:pulseCol, fillOpacity:0.6,
+            pane:'markerPane'
+        }).addTo(layer);
+        // Icon-Label
+        L.marker([ev.lat,ev.lon],{
+            pane:'labelPane',
+            icon: L.divIcon({
+                className:'',
+                html:`<div style="
+                    color:${col};font-size:13px;font-weight:900;
+                    text-shadow:0 0 6px ${col},0 0 2px #000;
+                    pointer-events:none;line-height:1;
+                    filter:drop-shadow(0 1px 3px #000);
+                ">${label}</div>`,
+                iconAnchor:[7,7]
+            })
+        }).bindTooltip(ev.level>=2?'⚠ Kritische Gefahr':'▲ Fahrzeug nähert sich',{
+            permanent:false, direction:'top', className:'radar-tooltip',
+            offset:[0,-10]
+        }).addTo(layer);
+    }
+}
+
+// ─── Radar-Modus Heatmap: Gradient Grün→Gelb→Rot nach Level ───
+function radarColor(level){
+    if(level<=0)  return '#00e676';   // Grün = frei
+    if(level===1) return '#ffaa00';   // Gelb = nähert sich
+    return '#ff1744';                  // Rot   = kritisch
+}
+
+function drawHeatmap(track){
+    track.segments.clearLayers();
+    const pts=track.data;
+
+    if(displayMode==='radar'){
+        // Radar: JEDEN Punkt zeichnen (kein Sampling) — exakt wie Höhenmeter
+        // Grün = kein Fahrzeug, Rot = Fahrzeug erkannt
+        for(let i=0;i<pts.length-1;i++){
+            const p1=pts[i], p2=pts[i+1];
+            const color = p1.radar>0 ? '#ff1111' : '#00e676';
+            const weight = p1.radar>0 ? 5 : 3;
+            const opacity = p1.radar>0 ? 1.0 : 0.75;
+            L.polyline([[p1.lat,p1.lon],[p2.lat,p2.lon]],{color,weight,opacity,lineCap:'round',lineJoin:'round'}).addTo(track.segments);
+        }
+        // Warn-Marker ausblenden im Radar-Linienmodus (Linie reicht)
+        if(track.radarLayer) map.removeLayer(track.radarLayer);
+    } else {
+        // Alle anderen Modi: Sampling für Performance (max 450 Segmente)
+        const step=Math.max(1,Math.floor(pts.length/450));
+        for(let i=0;i<pts.length-1;i+=step){
+            const p1=pts[i], p2=pts[Math.min(i+step,pts.length-1)];
+            let color;
+            if(displayMode==='speed'){ const r=Math.min(Math.max(p1.speed/40,0),1); color=`hsl(${(1-r)*120},100%,50%)`; }
+            else if(displayMode==='hr'){ const r=Math.min(Math.max((p1.hr-100)/80,0),1); color=`hsl(${(1-r)*120},100%,50%)`; }
+            else if(displayMode==='cad'){ const r=Math.min(Math.max((p1.cad-40)/80,0),1); color=`hsl(${r*120},100%,50%)`; }
+            else if(displayMode==='ele'){ const rng=track.maxEle-track.minEle; const r=rng>0?Math.min(Math.max((p1.ele-track.minEle)/rng,0),1):0; color=`hsl(${(1-r)*120},100%,50%)`; }
+            L.polyline([[p1.lat,p1.lon],[p2.lat,p2.lon]],{color,weight:4,opacity:0.85}).addTo(track.segments);
+        }
+        if(track.radarLayer) map.removeLayer(track.radarLayer);
+    }
+}
+
+// ═══════════════════════════════════════════════════════════
+//  Legend item (adds to both panels)
+// ═══════════════════════════════════════════════════════════
+function makeLegendHTML(track, prefix){
+    const minE=Math.floor(track.minEle), maxE=Math.ceil(track.maxEle), rng=(maxE-minE)||1;
+    const pts=track.data.map((e,i)=>`${(i/(track.data.length-1))*100},${44-((e.ele-minE)/rng)*38}`).join(' ');
+    const profileEv = prefix==='m'
+        ? `ontouchmove="profileTouch(event,'${track.id}')" ontouchend="profileLeave('${track.id}')"`
+        : `onmousemove="profileMouse(event,'${track.id}')" onmouseleave="profileLeave('${track.id}')"`;
+
+    // Radar-Statistik: radar_total = Gesamtüberholungen (letzter Wert im Track)
+    const hasRadar = track.data.some(p=>p.radar>0);
+    const lastTotal = track.data.map(p=>p.radarTotal).filter(v=>v!=null&&v!=='').pop();
+    const overCount = lastTotal!=null ? lastTotal : track.data.filter(p=>p.radar>0).length;
+    const radarHtml = hasRadar ? `
+        <div class="radar-stats">
+            <span class="radar-badge danger">🔴 ${overCount} Fahrzeuge</span>
+        </div>` : '';
+
+    // Gesamthöhenmeter (nur Aufstieg)
+    let totalEle = 0;
+    for(let i=1;i<track.data.length;i++){
+        const diff = track.data[i].ele - track.data[i-1].ele;
+        if(diff>0) totalEle += diff;
+    }
+    totalEle = Math.round(totalEle);
+
+    return `
+        <div class="${prefix}-track-header">
+            <span class="${prefix==='d'?'track-name':'m-track-name'}" style="color:${track.mColor}">${track.name}</span>
+            <button class="${prefix==='d'?'del-btn':'m-del'}" onclick="removeTrack('${track.id}')">✕</button>
+        </div>
+        <div style="display:flex;gap:6px;align-items:stretch">
+            <div style="flex:1;display:flex;flex-direction:column;gap:3px">
+                <div class="${prefix==='d'?'profile-box':'m-profile'}" ${profileEv}>
+                    <svg viewBox="0 0 100 48" preserveAspectRatio="none" style="width:100%;height:100%">
+                        <polyline points="0,48 ${pts} 100,48" fill="${track.mColor}" fill-opacity="0.15"/>
+                        <polyline points="${pts}" fill="none" stroke="${track.mColor}" stroke-width="1.5"/>
+                        <line id="${prefix}-hi-${track.id}" stroke="#fff" stroke-width="0.8" x1="0" y1="0" x2="0" y2="48" style="display:none"/>
+                        <text id="${prefix}-ht-${track.id}" font-size="9" fill="#fff" font-weight="bold" x="5" y="12" style="display:none">0m</text>
+                        <circle id="${prefix}-pp-${track.id}" r="2" fill="#fff" stroke="${track.mColor}" stroke-width="1.5" style="display:none" vector-effect="non-scaling-stroke" paint-order="stroke"/>
+                    </svg>
+                </div>
+                <div style="display:flex;justify-content:space-between;align-items:flex-end;gap:4px">
+                    <div id="${prefix}-dt-${track.id}"
+                        style="font-family:'SF Mono',monospace;font-size:12px;color:#aaa;
+                               letter-spacing:0.3px;font-weight:600;line-height:1.5">–</div>
+                    <div style="display:flex;flex-direction:column;align-items:flex-end;gap:1px;flex-shrink:0">
+                        <div id="${prefix}-km-${track.id}"
+                            style="font-family:'SF Mono',monospace;font-size:11px;color:#aaa;
+                                   font-weight:700;white-space:nowrap;display:none">⌖ 0.00 km</div>
+                        <div id="${prefix}-km-play-${track.id}"
+                            style="font-family:'SF Mono',monospace;font-size:11px;color:${track.mColor};
+                                   font-weight:800;white-space:nowrap;display:none">▶ 0.00 km</div>
+                    </div>
+                </div>
+            </div>
+            <div style="width:72px;flex-shrink:0;display:flex;flex-direction:column;align-items:center;gap:2px">
+                <svg id="${prefix}-gauge-${track.id}" viewBox="0 0 60 60" style="width:72px;height:72px">
+                    <!-- Hintergrund-Kreis -->
+                    <circle cx="30" cy="30" r="27" fill="#080808" stroke="#1e1e1e" stroke-width="1.2"/>
+                    <!-- Skala: 30 Segmente über 220°, je 2 Typen: Haupt (alle 5) und Neben -->
+                    ${(()=>{
+                        const segs=30, total=220, start=-110;
+                        let ticks='';
+                        for(let i=0;i<=segs;i++){
+                            const a = start + (i/segs)*total;
+                            const major = i%5===0;
+                            const r1 = major ? 19 : 21;
+                            const r2 = 25;
+                            const rad = (a-90)*Math.PI/180;
+                            const x1 = (30+r1*Math.cos(rad)).toFixed(2);
+                            const y1 = (30+r1*Math.sin(rad)).toFixed(2);
+                            const x2 = (30+r2*Math.cos(rad)).toFixed(2);
+                            const y2 = (30+r2*Math.sin(rad)).toFixed(2);
+                            ticks+=`<line class="gtick-${prefix}-${track.id}" data-i="${i}" x1="${x1}" y1="${y1}" x2="${x2}" y2="${y2}" stroke="#252525" stroke-width="${major?1.4:0.8}" stroke-linecap="round"/>`;
+                        }
+                        return ticks;
+                    })()}
+                    <!-- Zeiger — startet bei -110° -->
+                    <line id="${prefix}-gauge-needle-${track.id}"
+                        x1="30" y1="30" x2="30" y2="7"
+                        stroke="#fff" stroke-width="1.5" stroke-linecap="round"
+                        transform="rotate(-110,30,30)"
+                        style="transition:transform 0.5s cubic-bezier(0.25,0.46,0.45,0.94)"/>
+                    <!-- Mittelkreis -->
+                    <circle cx="30" cy="30" r="3" fill="#1a1a1a" stroke="#fff" stroke-width="1"/>
+                </svg>
+                <!-- Wert + Einheit UNTER dem Tacho -->
+                <div style="text-align:center;line-height:1.1;margin-top:-4px">
+                    <div id="${prefix}-gauge-val-${track.id}"
+                        style="font-family:'SF Mono',monospace;font-size:15px;font-weight:800;color:#fff">–</div>
+                    <div id="${prefix}-gauge-unit-${track.id}"
+                        style="font-size:9px;color:#aaa;font-weight:700;text-transform:uppercase;letter-spacing:0.5px">–</div>
+                </div>
+            </div>
+        </div>
+        ${radarHtml}
+        <div class="${prefix==='d'?'d-track-footer':'m-track-footer'}">
+            <button class="follow-btn" id="${prefix}-fbtn-${track.id}" onclick="toggleFollow('${track.id}')">Follow</button>
+            <button class="follow-btn" id="${prefix}-wxbtn-${track.id}" onclick="activateWeather('${track.id}')">Wetter</button>
+            <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px">
+                <div class="dist-badge" style="color:#00e676">↑ ${totalEle} m</div>
+                <div class="dist-badge">${track.totalDist.toFixed(2)} km</div>
+            </div>
+        </div>`;
+}
+
+function addLegendItem(track){
+    // Desktop
+    const dItem=document.createElement('div');
+    dItem.className='d-legend-item'; dItem.id='d-leg-'+track.id; dItem.style.borderLeftColor=track.mColor;
+    dItem.innerHTML=makeLegendHTML(track,'d');
+    document.getElementById('d-legend').appendChild(dItem);
+    // Mobile
+    const mItem=document.createElement('div');
+    mItem.className='m-legend-item'; mItem.id='m-leg-'+track.id; mItem.style.borderLeftColor=track.mColor;
+    mItem.innerHTML=makeLegendHTML(track,'m');
+    document.getElementById('m-legend').appendChild(mItem);
+}
+
+// ── Hover-Marker auf der Karte ──
+
+let hoverDotMarker = null;
+let hoverLabelMarker = null;
+
+function showHoverMarker(lat, lon, color, kmStr, eleStr){
+    // ── 1. Punkt: L.circleMarker — immer exakt auf der Koordinate ──
+    if(!hoverDotMarker){
+        hoverDotMarker = L.circleMarker([lat,lon],{
+            radius:7, color:'#fff', weight:2,
+            fillColor:color, fillOpacity:1,
+            pane:'markerPane', className:'hover-arrow-icon'
+        }).addTo(map);
+    } else {
+        hoverDotMarker.setLatLng([lat,lon]);
+        hoverDotMarker.setStyle({fillColor:color});
+    }
+
+    // ── 2. Label: divIcon mit festem Offset nach oben ──
+    const labelHtml = `<div style="
+        font-family:'SF Mono',monospace;
+        font-size:11px; font-weight:800;
+        color:${color};
+        white-space:nowrap; text-align:center;
+        line-height:16px;
+        text-shadow:0 1px 4px #000,0 0 8px #000;
+        pointer-events:none;
+    ">${kmStr}<br><span style="color:#ddd;font-weight:600">${eleStr}</span></div>`;
+
+    const labelIcon = L.divIcon({
+        className:'',
+        html: labelHtml,
+        iconAnchor:[45, 38]  // Label nach oben versetzt, X zentriert
+    });
+
+    if(!hoverLabelMarker){
+        hoverLabelMarker = L.marker([lat,lon],{
+            pane:'labelPane', icon:labelIcon
+        }).addTo(map);
+    } else {
+        hoverLabelMarker.setLatLng([lat,lon]);
+        hoverLabelMarker.setIcon(labelIcon);
+    }
+}
+
+function hideHoverMarker(){
+    if(hoverDotMarker){ map.removeLayer(hoverDotMarker); hoverDotMarker=null; }
+    if(hoverLabelMarker){ map.removeLayer(hoverLabelMarker); hoverLabelMarker=null; }
+}
+
+// Profile hover/touch
+function updateProfileIndicator(prefix,id,xP,track){
+    const idx=Math.max(0,Math.min(track.data.length-1,Math.floor(xP*(track.data.length-1))));
+    const p=track.data[idx];
+    const hi=document.getElementById(`${prefix}-hi-${id}`), ht=document.getElementById(`${prefix}-ht-${id}`);
+    if(!hi)return;
+    hi.setAttribute('x1',xP*100); hi.setAttribute('x2',xP*100); hi.style.display='block';
+    ht.textContent=Math.round(p.ele)+'m';
+    ht.setAttribute('x',xP>0.8?(xP*100-18):(xP*100+2)); ht.style.display='block';
+    // Hover km anzeigen
+    const kmEl=document.getElementById(`${prefix}-km-${id}`);
+    if(kmEl){ kmEl.textContent='⌖ '+p.distKm.toFixed(2)+' km'; kmEl.style.display='block'; }
+    // Blinkenden Marker auf der Karte zeigen
+    showHoverMarker(p.lat, p.lon, track.mColor,
+        p.distKm.toFixed(2)+' km',
+        Math.round(p.ele)+' m');
+}
+window.profileMouse=(e,id)=>{
+    const track=allTracks.find(t=>t.id===id); if(!track)return;
+    const rect=e.currentTarget.getBoundingClientRect();
+    updateProfileIndicator('d',id,(e.clientX-rect.left)/rect.width,track);
+};
+window.profileTouch=(e,id)=>{
+    e.preventDefault();
+    const track=allTracks.find(t=>t.id===id); if(!track)return;
+    const rect=e.currentTarget.getBoundingClientRect();
+    updateProfileIndicator('m',id,(e.touches[0].clientX-rect.left)/rect.width,track);
+};
+window.profileLeave=(id)=>{
+    ['d','m'].forEach(p=>{
+        const hi=document.getElementById(`${p}-hi-${id}`), ht=document.getElementById(`${p}-ht-${id}`);
+        if(hi)hi.style.display='none'; if(ht)ht.style.display='none';
+        const kmEl=document.getElementById(`${p}-km-${id}`);
+        if(kmEl) kmEl.style.display='none';
+    });
+    hideHoverMarker();
+};
+
+// ═══════════════════════════════════════════════════════════
+//  Playback
+// ═══════════════════════════════════════════════════════════
+function polarToXY(angleDeg, cx, cy, radius){
+    const rad = (angleDeg - 90) * Math.PI / 180;
+    return { x: cx + radius * Math.cos(rad), y: cy + radius * Math.sin(rad) };
+}
+
+function updatePositions(){
+    setTimeDisplay(currentElapsed);
+    setSliderValue(currentElapsed);
+    allTracks.forEach(track=>{
+        // Aktuellen Punkt finden
+        let idx=0;
+        for(let i=0;i<track.data.length;i++){ if(track.data[i].relTime<=currentElapsed) idx=i; else break; }
+        const p=track.data[idx];
+
+        track.marker.setLatLng([p.lat,p.lon]); track.speedLabel.setLatLng([p.lat,p.lon]);
+        const val=displayMode==='speed'?Math.round(p.speed)+' km/h'
+            :(displayMode==='hr'?Math.round(p.hr)+' bpm'
+            :(displayMode==='cad'?Math.round(p.cad)+' rpm'
+            :(displayMode==='radar'?(p.radar>0?'🔴 '+p.radarRanges+'m':'')
+            :Math.round(p.ele)+' m')));
+        if(track.speedLabel.getElement()) track.speedLabel.getElement().innerHTML=val;
+        if(followId===track.id) map.setView([p.lat,p.lon],getZoomValue(),{animate:false});
+
+        // Positions-Punkt im Höhenprofil aktualisieren
+        const xP = track.data.length>1 ? idx/(track.data.length-1) : 0;
+        const minE=track.minEle, maxE=track.maxEle, rng=(maxE-minE)||1;
+        const yP = 44 - ((p.ele-minE)/rng)*38; // gleiche Formel wie pts-Berechnung
+        const cx = xP*100, cy = yP;
+        ['d','m'].forEach(prefix=>{
+            const dot=document.getElementById(`${prefix}-pp-${track.id}`);
+            if(!dot) return;
+            dot.setAttribute('cx', cx);
+            dot.setAttribute('cy', cy);
+            dot.style.display='block';
+            // Playback km-Stand
+            const kmPlay=document.getElementById(`${prefix}-km-play-${track.id}`);
+            if(kmPlay){ kmPlay.textContent='▶ '+p.distKm.toFixed(2)+' km'; kmPlay.style.display='block'; }
+        });
+        // ── Datum & Uhrzeit unter Profil ──
+        const absTime = new Date(track.startT + currentElapsed);
+        const dd = String(absTime.getDate()).padStart(2,'0');
+        const mm = String(absTime.getMonth()+1).padStart(2,'0');
+        const yyyy = absTime.getFullYear();
+        const hh = String(absTime.getHours()).padStart(2,'0');
+        const min = String(absTime.getMinutes()).padStart(2,'0');
+        const ss = String(absTime.getSeconds()).padStart(2,'0');
+        const dtStr = `${dd}.${mm}.${yyyy}<br>${hh}:${min}:${ss}`;
+        ['d','m'].forEach(prefix=>{
+            const dtEl=document.getElementById(`${prefix}-dt-${track.id}`);
+            if(dtEl) dtEl.innerHTML=dtStr;
+        });
+        ['d','m'].forEach(prefix=>{
+            const needle = document.getElementById(`${prefix}-gauge-needle-${track.id}`);
+            const valEl  = document.getElementById(`${prefix}-gauge-val-${track.id}`);
+            const unitEl = document.getElementById(`${prefix}-gauge-unit-${track.id}`);
+            if(!needle) return;
+
+            let val=0, maxVal=1, label='', unit='';
+            if(displayMode==='speed'){
+                val=p.speed; maxVal=60; label=Math.round(p.speed); unit='km/h';
+            } else if(displayMode==='hr'){
+                val=p.hr; maxVal=200; label=Math.round(p.hr); unit='bpm';
+            } else if(displayMode==='cad'){
+                val=p.cad; maxVal=120; label=Math.round(p.cad); unit='rpm';
+            } else if(displayMode==='ele'){
+                val=p.ele - track.minEle; maxVal=(track.maxEle-track.minEle)||1;
+                label=Math.round(p.ele); unit='m';
+            } else if(displayMode==='radar'){
+                val=p.radarRanges||0; maxVal=150;
+                label=p.radar>0?(p.radarRanges+'m'):'–'; unit=p.radar>0?'Abstand':'frei';
+            }
+
+            const ratio = Math.min(Math.max(val/maxVal, 0), 1);
+            const startAngle = -110;
+            const totalArc   = 220;
+            const GCX=30, GCY=30;
+            const activeCount = Math.round(ratio * 30);
+
+            // Farbe zuerst berechnen
+            let color = track.mColor;
+            if(displayMode==='radar') color = p.radar>0 ? '#ff1111' : '#00e676';
+            else if(displayMode==='hr'){ const rh=Math.min(Math.max((p.hr-100)/80,0),1); color=`hsl(${(1-rh)*120},100%,50%)`; }
+            else if(displayMode==='speed'){ const rs=Math.min(Math.max(p.speed/40,0),1); color=`hsl(${(1-rs)*120},100%,50%)`; }
+            else if(displayMode==='cad'){ const rc=Math.min(Math.max((p.cad-40)/80,0),1); color=`hsl(${rc*120},100%,50%)`; }
+
+            // Striche einfärben
+            const ticks = document.querySelectorAll(`.gtick-${prefix}-${track.id}`);
+            ticks.forEach(tick => {
+                const i = parseInt(tick.getAttribute('data-i'));
+                tick.setAttribute('stroke', i <= activeCount ? color : '#252525');
+                tick.setAttribute('stroke-width', i <= activeCount ? (i%5===0 ? '1.8' : '1.1') : (i%5===0 ? '1.4' : '0.8'));
+            });
+
+            // Zeiger
+            const endAngle = startAngle + ratio * totalArc;
+            needle.setAttribute('transform', `rotate(${endAngle},${GCX},${GCY})`);
+            needle.setAttribute('stroke', color);
+
+            valEl.textContent  = label;
+            unitEl.textContent = unit;
+        });
+    });
+}
+
+function animStep(ts){
+    if(!isPlaying)return;
+    if(!lastTS)lastTS=ts;
+    const delta=ts-lastTS; lastTS=ts;
+    currentElapsed+=delta*(getSpeedValue()*60);
+    if(currentElapsed>=maxDuration){ currentElapsed=maxDuration; isPlaying=false; setPlayBtnText('▶ Play'); }
+    updatePositions(); requestAnimationFrame(animStep);
+}
+
+function togglePlay(){
+    if(currentElapsed>=maxDuration) currentElapsed=0;
+    isPlaying=!isPlaying;
+    setPlayBtnText(isPlaying?'⏸ Pause':'▶ Play');
+    if(isPlaying){ lastTS=0; requestAnimationFrame(animStep); }
+}
+
+document.getElementById('d-playBtn').onclick=togglePlay;
+document.getElementById('m-playBtn').onclick=togglePlay;
+
+document.getElementById('d-timeSlider').oninput=(e)=>{ currentElapsed=parseInt(e.target.value); document.getElementById('m-timeSlider').value=e.target.value; if(!isPlaying)updatePositions(); };
+document.getElementById('m-timeSlider').oninput=(e)=>{ currentElapsed=parseInt(e.target.value); document.getElementById('d-timeSlider').value=e.target.value; if(!isPlaying)updatePositions(); };
+
+// ═══════════════════════════════════════════════════════════
+//  Track controls
+// ═══════════════════════════════════════════════════════════
+let activeWeatherId = null;
+
+window.activateWeather=(id)=>{
+    const track = allTracks.find(t=>t.id===id);
+    if(!track) return;
+    activeWeatherId = id;
+    // Alle Wetter-Buttons zurücksetzen, aktiven hervorheben
+    document.querySelectorAll('[id*="-wxbtn-"]').forEach(b=>{
+        const active = b.id.endsWith('-'+id);
+        b.classList.toggle('active', active);
+    });
+    fetchWeather(track.data[0].lat, track.data[0].lon, new Date(track.startT), track.name);
+};
+
+window.toggleFollow=(id)=>{
+    followId=(followId===id)?null:id;
+    document.querySelectorAll('.follow-btn').forEach(b=>{
+        if(b.id.includes('-wxbtn-')) return; // Wetter-Buttons unberührt lassen
+        const active = followId && (b.id===`d-fbtn-${followId}` || b.id===`m-fbtn-${followId}`);
+        b.classList.toggle('active', !!active);
+    });
+    if(!followId) zoomAll(); else updatePositions();
+};
+
+window.removeTrack=(id)=>{
+    const idx=allTracks.findIndex(t=>t.id===id);
+    if(idx>-1){
+        map.removeLayer(allTracks[idx].marker);
+        map.removeLayer(allTracks[idx].speedLabel);
+        map.removeLayer(allTracks[idx].segments);
+        if(allTracks[idx].radarLayer) map.removeLayer(allTracks[idx].radarLayer);
+        ['d','m'].forEach(p=>{ const el=document.getElementById(`${p}-leg-${id}`); if(el)el.remove(); });
+        if(followId===id) followId=null;
+        if(activeWeatherId===id) activeWeatherId=null;
+        allTracks.splice(idx,1);
+        updateMaxDuration();
+    }
+    if(allTracks.length===0){
+        document.getElementById('m-empty').style.display='';
+        document.getElementById('weather-widget').style.display='none';
+    }
+};
+
+function zoomAll(){ if(allTracks.length===0)return; const b=L.latLngBounds(); allTracks.forEach(t=>b.extend(t.segments.getBounds())); map.fitBounds(b,{padding:[30,30]}); }
+window.resetAll=()=>{
+    isPlaying=false; setPlayBtnText('▶ Play'); currentElapsed=0; followId=null;
+    allTracks.forEach(track=>{
+        ['d','m'].forEach(prefix=>{
+            const dot=document.getElementById(`${prefix}-pp-${track.id}`);
+            if(dot) dot.style.display='none';
+            const kmPlay=document.getElementById(`${prefix}-km-play-${track.id}`);
+            if(kmPlay) kmPlay.style.display='none';
+        });
+    });
+    updatePositions(); zoomAll();
+};
+function updateMaxDuration(){ maxDuration=allTracks.length>0?Math.max(...allTracks.map(t=>t.duration)):1; setSliderMax(maxDuration); }
+</script>
+</body>
+</html>
