@@ -327,6 +327,39 @@
         }
         @media (max-width: 767px), (pointer: coarse) {
             #desktop-panel { display: none !important; }
+
+            /* Wetter-Widget mobile: kompakter Einzeiler über dem Sheet */
+            #weather-widget {
+                border-radius: 8px !important;
+                top: auto !important;
+                bottom: calc(214px + env(safe-area-inset-bottom, 0px)) !important;
+                right: 50% !important;
+                left: auto !important;
+                transform: translateX(50%) !important;
+            }
+            #wx-drag { display: none !important; }
+            #weather-widget > div:last-child {
+                flex-direction: row !important;
+                padding: 5px 10px !important;
+                gap: 8px !important;
+                align-items: center !important;
+            }
+            #weather-widget > div:last-child > div {
+                flex-direction: row !important;
+                border: none !important;
+                padding: 0 !important;
+                min-width: unset !important;
+                gap: 5px !important;
+                align-items: center !important;
+            }
+            #wx-icon  { font-size: 16px !important; }
+            #wx-temp  { font-size: 13px !important; margin-top: 0 !important; }
+            #wx-desc  { display: none !important; }
+            #wx-date  { font-size: 10px !important; margin-top: 0 !important; }
+            #wx-cloud { font-size: 12px !important; margin-top: 0 !important; }
+            #wx-wind-arrow { font-size: 14px !important; }
+            #wx-wind  { font-size: 12px !important; margin-top: 0 !important; }
+            #wx-wind-dir { font-size: 10px !important; margin-top: 0 !important; }
         }
     </style>
 </head>
@@ -1349,6 +1382,15 @@ function drawHeatmap(track){
 // ═══════════════════════════════════════════════════════════
 //  Legend item (adds to both panels)
 // ═══════════════════════════════════════════════════════════
+function fmtDuration(ms){
+    const s = Math.round(ms/1000);
+    const h = Math.floor(s/3600);
+    const m = Math.floor((s%3600)/60);
+    const sec = s%60;
+    if(h>0) return `${h}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+    return `${m}:${String(sec).padStart(2,'0')}`;
+}
+
 function makeLegendHTML(track, prefix){
     const minE=Math.floor(track.minEle), maxE=Math.ceil(track.maxEle), rng=(maxE-minE)||1;
     const pts=track.data.map((e,i)=>`${(i/(track.data.length-1))*100},${44-((e.ele-minE)/rng)*38}`).join(' ');
@@ -1450,6 +1492,7 @@ function makeLegendHTML(track, prefix){
             <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px">
                 <div class="dist-badge" style="color:#00e676">↑ ${totalEle} m</div>
                 <div class="dist-badge">${track.totalDist.toFixed(2)} km</div>
+                <div class="dist-badge" style="color:#888">⏱ ${fmtDuration(track.duration)}</div>
             </div>
         </div>`;
 }
