@@ -1481,13 +1481,15 @@ function makeLegendHTML(track, prefix){
             <span class="radar-badge danger">🔴 ${overCount} Fahrzeuge</span>
         </div>` : '';
 
-    // Gesamthöhenmeter (nur Aufstieg)
-    let totalEle = 0;
+    // Gesamthöhenmeter (Aufstieg + Abstieg)
+    let totalEle = 0, totalDes = 0;
     for(let i=1;i<track.data.length;i++){
         const diff = track.data[i].ele - track.data[i-1].ele;
         if(diff>0) totalEle += diff;
+        else totalDes += Math.abs(diff);
     }
     totalEle = Math.round(totalEle);
+    totalDes = Math.round(totalDes);
 
     return `
         <div class="${prefix}-track-header">
@@ -1565,6 +1567,7 @@ function makeLegendHTML(track, prefix){
             <button class="follow-btn" id="${prefix}-wxbtn-${track.id}" onclick="activateWeather('${track.id}')">Wetter</button>
             <div style="display:flex;flex-direction:column;align-items:flex-end;gap:2px">
                 <div class="dist-badge" style="color:#00e676">↑ ${totalEle} m</div>
+                <div class="dist-badge" style="color:#ff6b6b">↓ ${totalDes} m</div>
                 <div class="dist-badge">${track.totalDist.toFixed(2)} km</div>
                 <div class="dist-badge" style="color:#888">⏱ ${fmtDuration(track.duration)}</div>
             </div>
@@ -1689,12 +1692,21 @@ function updatePositions(){
         for(let i=0;i<track.data.length;i++){ if(track.data[i].relTime<=currentElapsed) idx=i; else break; }
         const p=track.data[idx];
 
+        // Aktuelle Steigung berechnen (über die letzten 3 Punkte für Glättung)
+        let gradient = 0;
+        if(idx > 2){
+            const p0 = track.data[idx-3];
+            const dEle = p.ele - p0.ele;
+            const dDist = (p.distKm - p0.distKm) * 1000; // in Meter
+            if(dDist > 0) gradient = Math.round((dEle / dDist) * 100);
+        }
+
         track.marker.setLatLng([p.lat,p.lon]); track.speedLabel.setLatLng([p.lat,p.lon]);
         const val=displayMode==='speed'?Math.round(p.speed)+' km/h'
             :(displayMode==='hr'?Math.round(p.hr)+' bpm'
             :(displayMode==='cad'?Math.round(p.cad)+' rpm'
             :(displayMode==='radar'?(p.radar>0?'🔴 '+p.radarRanges+'m':'')
-            :Math.round(p.ele)+' m')));
+            :(Math.round(p.ele)+' m'+(gradient!==0?' '+(gradient>0?'▲':'▼')+Math.abs(gradient)+'%':'')))));
         if(track.speedLabel.getElement()) track.speedLabel.getElement().innerHTML=val;
         if(followId===track.id) map.setView([p.lat,p.lon],getZoomValue(),{animate:false});
 
@@ -1741,7 +1753,7 @@ function updatePositions(){
                 val=p.cad; maxVal=120; label=Math.round(p.cad); unit='rpm';
             } else if(displayMode==='ele'){
                 val=p.ele - track.minEle; maxVal=(track.maxEle-track.minEle)||1;
-                label=Math.round(p.ele); unit='m';
+                label=Math.round(p.ele); unit=gradient!==0?(gradient>0?'▲':'▼')+Math.abs(gradient)+'%':'m';
             } else if(displayMode==='radar'){
                 val=p.radarRanges||0; maxVal=150;
                 label=p.radar>0?(p.radarRanges+'m'):'–'; unit=p.radar>0?'Abstand':'frei';
