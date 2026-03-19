@@ -371,6 +371,32 @@
             .m-track-footer .follow-btn[id*="wxbtn"] { font-size: 0; padding: 5px 10px; }
             .m-track-footer .follow-btn[id*="wxbtn"].active::before { content: '🌤'; }
         }
+
+        /* ── Landscape auf Touch-Gerät: Desktop-Panel links, kompakt ── */
+        @media (max-height: 500px) and (pointer: coarse) {
+            #desktop-panel {
+                display: flex !important;
+                width: 200px !important;
+                max-height: 100vh !important;
+                top: 0 !important; left: 0 !important;
+                border-radius: 0 10px 10px 0 !important;
+            }
+            #desktop-panel .lbl { font-size: 8px !important; }
+            #desktop-panel .mode-btn { font-size: 7px !important; padding: 3px 1px !important; }
+            #desktop-panel #d-time { font-size: 14px !important; }
+            #desktop-panel .btn-upload { font-size: 8px !important; padding: 5px 6px !important; }
+            #desktop-panel #d-playBtn,
+            #desktop-panel #d-resetBtn { font-size: 9px !important; padding: 7px !important; }
+            #m-topbar, #m-modebar, #m-fab, #m-sheet { display: none !important; }
+            #weather-widget {
+                bottom: auto !important;
+                top: 8px !important;
+                right: 8px !important;
+                left: auto !important;
+                transform: none !important;
+                z-index: 3000 !important;
+            }
+        }
     </style>
 </head>
 <body>
