@@ -410,7 +410,7 @@
     </div>
     <!-- Icon-Leiste nur im minimierten Zustand -->
     <div id="d-mini-icons" style="display:none;flex-direction:column;align-items:center;gap:6px;padding:8px 0">
-        <button onclick="document.getElementById('d-fileInput').click()" title="Laden"
+        <button onclick="triggerFileInput()" title="Laden"
             style="background:none;border:none;color:#aaa;font-size:18px;cursor:pointer;line-height:1">📂</button>
         <button id="d-mini-play" onclick="togglePlay()" title="Play/Pause" disabled
             style="background:none;border:none;color:#00d4ff;font-size:18px;cursor:pointer;line-height:1">▶</button>
@@ -548,8 +548,8 @@
 </div>
 
 <button id="m-fab" style="bottom: calc(220px + env(safe-area-inset-bottom, 0px))"
-        onclick="document.getElementById('m-fileInput').click()">＋</button>
-<input type="file" id="m-fileInput" accept=".gpx,.tcx,.fit" multiple style="display:none">
+        onclick="triggerFileInput()">＋</button>
+<input type="file" id="m-fileInput" accept=".gpx,.tcx,.fit,application/gpx+xml,application/vnd.garmin.tcx+xml" multiple style="display:none">
 
 <div id="m-sheet" class="collapsed">
     <div id="m-handle-area"><div id="m-handle"></div></div>
@@ -1375,6 +1375,25 @@ async function handleFiles(files){
     updateMaxDuration();
     setPlayBtnDisabled(allTracks.length===0);
     if(allTracks.length>0){ zoomAll(); if(isMobile()) setSheet(true); }
+}
+
+// ── iOS Fix: File-Input neu erstellen bei jedem Klick ──
+// Safari cached den Input und graut ihn nach einer Weile aus.
+// Lösung: Bei jedem Klick ein frisches <input> erzeugen.
+function triggerFileInput(){
+    // Altes Element entfernen und neu erstellen
+    const old = document.getElementById('m-fileInput');
+    if(old) old.remove();
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.id = 'm-fileInput';
+    input.accept = '.gpx,.tcx,.fit,application/gpx+xml,application/vnd.garmin.tcx+xml';
+    input.multiple = true;
+    input.style.display = 'none';
+    input.onchange = (e)=>{ handleFiles(e.target.files); e.target.value=''; };
+    document.body.appendChild(input);
+    // Kurze Verzögerung nötig damit iOS den neuen Input erkennt
+    setTimeout(()=>input.click(), 50);
 }
 
 document.getElementById('d-fileInput').onchange=(e)=>{ handleFiles(e.target.files); e.target.value=''; };
