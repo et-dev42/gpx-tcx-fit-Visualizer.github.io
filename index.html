@@ -5,6 +5,9 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
     <meta name="apple-mobile-web-app-capable" content="yes">
     <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+    <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+    <meta http-equiv="Pragma" content="no-cache">
+    <meta http-equiv="Expires" content="0">
     <title>GPX Visualizer</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
@@ -423,7 +426,7 @@
     <div class="d-actions-top" style="padding:8px 10px 4px;flex-shrink:0;display:flex;flex-direction:column;gap:6px;border-bottom:1px solid #1e1e1e">
         <div class="file-wrap">
             <label for="d-fileInput" class="btn-upload" style="display:block;text-align:center;cursor:pointer">GPX / TCX / FIT laden</label>
-            <input type="file" id="d-fileInput" accept=".gpx,.tcx,.fit" multiple style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">
+            <input type="file" id="d-fileInput" accept="*/*" multiple style="position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;">
         </div>
         <div id="d-actions-inner" class="d-actions" style="margin:0">
             <button id="d-playBtn" disabled>▶ Play</button>
@@ -554,10 +557,11 @@
     font-size:26px; cursor:pointer;
     display:flex; align-items:center; justify-content:center;
     box-shadow:0 4px 20px rgba(0,212,255,0.4);
-    user-select:none;">＋</label>
+    user-select:none; -webkit-user-select:none;">＋</label>
 <input type="file" id="m-fileInput"
-    accept=".gpx,.tcx,.fit"
-    multiple style="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;">
+    accept="*/*"
+    multiple
+    style="position:fixed;left:-9999px;top:-9999px;width:1px;height:1px;opacity:0;">
 
 <div id="m-sheet" class="collapsed">
     <div id="m-handle-area"><div id="m-handle"></div></div>
